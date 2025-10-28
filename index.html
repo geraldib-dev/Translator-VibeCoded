@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Translation Editor (Grouped)</title>
+<title>Translation Editor (Grouped + Smart Search)</title>
 <style>
 body { 
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -43,12 +43,12 @@ textarea {
 textarea:focus {
     border-color:#007bff; box-shadow:0 0 5px rgba(0,123,255,0.3); outline:none;
 }
-.highlight { background:#fff3a7; }
+.highlight { background:#fff3a7; padding:0 2px; border-radius:2px; }
 </style>
 </head>
 <body>
 
-<h1>Translation Editor for Romain</h1>
+<h1>Laravel Translation Editor (Grouped + Smart Search)</h1>
 
 <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;">
   <input type="file" id="fileInput" accept=".php">
@@ -127,8 +127,16 @@ function jsObjectToPhp(obj, indent = 0) {
 }
 
 // =========== Grouped Rendering ===========
+function highlightText(text, term) {
+  if (!term) return text;
+  const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return text.replace(regex, '<span class="highlight">$1</span>');
+}
+
 function buildGroupedDOM(obj, parentKey='', level=0, filter='') {
   const container = document.createElement('div');
+  const term = filter.toLowerCase();
+
   for (const [key, value] of Object.entries(obj)) {
     const fullKey = parentKey ? `${parentKey}.${key}` : key;
     if (typeof value === 'object' && value !== null) {
@@ -136,24 +144,31 @@ function buildGroupedDOM(obj, parentKey='', level=0, filter='') {
       groupDiv.className = level===0 ? 'group' : 'subgroup';
       const header = document.createElement('div');
       header.className = 'header';
-      header.innerHTML = `<span>${key}</span><span class="arrow">▶</span>`;
+      header.innerHTML = `<span>${highlightText(key, term)}</span><span class="arrow">▶</span>`;
       const content = document.createElement('div');
       content.className = 'content';
       const children = buildGroupedDOM(value, fullKey, level+1, filter);
-      if (children) content.appendChild(children);
-      header.addEventListener('click', ()=>groupDiv.classList.toggle('open'));
-      groupDiv.append(header, content);
-      container.appendChild(groupDiv);
+      if (children && children.children.length > 0) {
+        content.appendChild(children);
+        groupDiv.append(header, content);
+        container.appendChild(groupDiv);
+        header.addEventListener('click', ()=>groupDiv.classList.toggle('open'));
+        // Auto-open groups that contain matches
+        if (filter && content.innerHTML.includes('highlight')) groupDiv.classList.add('open');
+      }
     } else {
-      if (filter && !fullKey.toLowerCase().includes(filter) && !value.toLowerCase().includes(filter)) continue;
-      const field = document.createElement('div');
-      field.innerHTML = `
-        <div style="margin-bottom:5px;font-weight:500;">${fullKey}</div>
-        <textarea data-key="${fullKey}">${value}</textarea>`;
-      container.appendChild(field);
+      const keyMatch = fullKey.toLowerCase().includes(term);
+      if (!filter || keyMatch) {
+        const field = document.createElement('div');
+        field.innerHTML = `
+          <div style="margin-bottom:5px;font-weight:500;">${highlightText(fullKey, term)}</div>
+          <textarea data-key="${fullKey}">${highlightText(value, term)}</textarea>`;
+        container.appendChild(field);
+      }
     }
   }
-  return container.children.length ? container : null;
+
+  return container;
 }
 
 function renderGrouped(filter='') {
@@ -164,7 +179,8 @@ function renderGrouped(filter='') {
   if (grouped) wrap.appendChild(grouped);
   wrap.querySelectorAll('textarea').forEach(el=>{
     el.addEventListener('input',()=>{
-      flat[el.dataset.key] = el.value;
+      const key = el.dataset.key;
+      flat[key] = el.value;
       saveToLocalStorage();
     });
   });
@@ -205,14 +221,17 @@ document.getElementById('fileInput').addEventListener('change', async e=>{
   } catch(err){ alert('⚠️ Could not parse PHP file: '+err.message); }
 });
 
-// =========== Search ===========
+// =========== Search (Smart Expand + Highlight) ===========
 document.getElementById('searchInput').addEventListener('input', e=>{
-  renderGrouped(e.target.value);
+  const term = e.target.value.trim();
+  renderGrouped(term);
 });
 
 // =========== Export ===========
 document.getElementById('downloadPhp').addEventListener('click',()=>{
-  document.querySelectorAll('textarea').forEach(el=>flat[el.dataset.key]=el.value);
+  document.querySelectorAll('textarea').forEach(el=>{
+    flat[el.dataset.key]=el.value;
+  });
   const structured = unflatten(flat);
   const phpString = jsObjectToPhp(structured);
   const blob = new Blob([phpString],{type:'text/plain'});
