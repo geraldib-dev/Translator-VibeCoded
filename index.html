@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Translation Editor for Romain</title>
+<style>
+body { 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    margin: 20px; 
+    background: #f0f2f5; 
+    color: #333; 
+}
+
+h1 { 
+    color: #222; 
+    font-size: 24px; 
+    margin-bottom: 15px; 
+}
+
+input[type=file], button, input[type=text] {
+    margin: 10px 5px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+button { 
+    background: #007bff; 
+    color: white; 
+    border: none; 
+}
+button:hover { 
+    background: #0056b3; 
+}
+
+#searchInput { 
+    width: 250px; 
+}
+
+table { 
+    width: 100%; 
+    border-collapse: collapse; 
+    background: white; 
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+    border-radius: 8px; 
+    overflow: hidden; 
+    margin-top: 15px; 
+}
+
+th, td { 
+    padding: 12px 15px; 
+    border-bottom: 1px solid #eee; 
+    vertical-align: top; 
+    word-break: break-word;
+}
+
+th { 
+    background: #f7f7f7; 
+    text-align: left; 
+    font-weight: 600; 
+}
+
+tbody tr:nth-child(odd) { background: #fcfcfc; }
+
+textarea { 
+    width: 100%; 
+    min-height: 50px; 
+    border: 1px solid #ccc; 
+    border-radius: 4px; 
+    padding: 8px; 
+    resize: vertical; 
+    font-family: monospace; 
+    font-size: 13px; 
+    transition: border 0.2s, box-shadow 0.2s;
+}
+
+textarea:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 5px rgba(0,123,255,0.3);
+    outline: none;
+}
+
+.highlight {
+    background-color: #fff3a7;
+}
+</style>
+</head>
+<body>
+
+<h1>Laravel Translation Editor</h1>
+
+<input type="file" id="fileInput" accept=".php">
+<input type="text" id="searchInput" placeholder="🔍 Search key or value...">
+<button id="downloadPhp">💾 Export PHP</button>
+
+<table id="translationTable">
+  <thead><tr><th>Key</th><th>Value</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+let data = {};
+let flat = {};
+let uploadedFileName = 'translations.php';
+
+// -----------------------------
+// Flatten/unflatten object
+// -----------------------------
+function flatten(obj, prefix = '', res = {}) {
+    for (const k in obj) {
+        const path = prefix ? prefix + '.' + k : k;
+        if (typeof obj[k] === 'object' && obj[k] !== null) flatten(obj[k], path, res);
+        else res[path] = obj[k];
+    }
+    return res;
+}
+
+function unflatten(flatObj) {
+    const res = {};
+    for (const path in flatObj) {
+        path.split('.').reduce((acc, key, i, arr) => {
+            if (i === arr.length - 1) acc[key] = flatObj[path];
+            else acc[key] = acc[key] || {};
+            return acc[key];
+        }, res);
+    }
+    return res;
+}
+
+// -----------------------------
+// Parse PHP array into JS object (supports multiline strings)
+// -----------------------------
+function parsePhpArray(phpString) {
+    const lines = phpString.split(/\r?\n/);
+    const stack = [{}];
+    let currentKey = null;
+    let multiLineValue = null;
+
+    lines.forEach(line => {
+        line = line.trim();
+        if (!line || line.startsWith('<?') || line.startsWith('return') || line.startsWith('];')) return;
+
+        // End of multiline string
+        if (multiLineValue !== null) {
+            if (line.endsWith("',") || line.endsWith("'")) {
+                multiLineValue += '\n' + line.replace(/',?$/, '');
+                stack[stack.length - 1][currentKey] = multiLineValue.replace(/\\'/g, "'");
+                multiLineValue = null;
+                currentKey = null;
+            } else {
+                multiLineValue += '\n' + line;
+            }
+            return;
+        }
+
+        // Match "key" => [
+        let match = line.match(/'([^']+)'\s*=>\s*\[/);
+        if (match) {
+            currentKey = match[1];
+            const newObj = {};
+            stack[stack.length - 1][currentKey] = newObj;
+            stack.push(newObj);
+            return;
+        }
+
+        // End of nested array
+        if (line === '],' || line === ']') {
+            stack.pop();
+            return;
+        }
+
+        // Match "key" => 'value',
+        match = line.match(/'([^']+)'\s*=>\s*'(.*)/);
+        if (match) {
+            const k = match[1];
+            let v = match[2];
+            if (!v.endsWith("'") && !v.endsWith("',")) {
+                // Start of multiline string
+                multiLineValue = v;
+                currentKey = k;
+            } else {
+                v = v.replace(/',?$/, ''); // remove ending ' or ',
+                stack[stack.length - 1][k] = v.replace(/\\'/g, "'");
+            }
+        }
+    });
+
+    return stack[0];
+}
+
+// -----------------------------
+// Convert JS object -> PHP array string
+// -----------------------------
+function jsObjectToPhp(obj, indent = 0) {
+    const pad = '    '.repeat(indent);
+    let str = indent === 0 ? "<?php\n\nreturn [\n" : '';
+    for (const key in obj) {
+        const val = obj[key];
+        if (typeof val === 'object' && val !== null) {
+            str += `${pad}    '${key}' => [\n${jsObjectToPhp(val, indent + 1)}${pad}    ],\n`;
+        } else {
+            const safe = val.replace(/'/g, "\\'");
+            str += `${pad}    '${key}' => '${safe}',\n`;
+        }
+    }
+    if (indent === 0) str += "];";
+    return str;
+}
+
+// -----------------------------
+// Render table with search highlighting
+// -----------------------------
+function renderTable(flatObj, filter = '') {
+    const tbody = document.querySelector('#translationTable tbody');
+    tbody.innerHTML = '';
+    const term = filter.toLowerCase();
+
+    Object.entries(flatObj).forEach(([key, value]) => {
+        if (term && !key.toLowerCase().includes(term) && !value.toLowerCase().includes(term)) return;
+        const level = key.split('.').length - 1;
+        const tr = document.createElement('tr');
+        tr.className = 'level-' + level;
+
+        // Highlight matching text
+        const highlightedKey = term ? key.replace(new RegExp(`(${term})`, 'gi'), '<span class="highlight">$1</span>') : key;
+        const highlightedValue = term ? value.replace(new RegExp(`(${term})`, 'gi'), '<span class="highlight">$1</span>') : value;
+
+        tr.innerHTML = `<td>${highlightedKey}</td><td><textarea data-key="${key}">${value}</textarea></td>`;
+        tbody.appendChild(tr);
+    });
+}
+
+// -----------------------------
+// Load PHP file
+// -----------------------------
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    uploadedFileName = file.name;
+    const text = await file.text();
+    try {
+        data = parsePhpArray(text);
+        flat = flatten(data);
+        renderTable(flat);
+    } catch(err) {
+        alert('⚠️ Could not parse PHP file: ' + err.message);
+    }
+});
+
+// -----------------------------
+// Search filter
+// -----------------------------
+document.getElementById('searchInput').addEventListener('input', e => {
+    const term = e.target.value.toLowerCase();
+    renderTable(flat, term);
+});
+
+// -----------------------------
+// Export PHP
+// -----------------------------
+document.getElementById('downloadPhp').addEventListener('click', () => {
+    document.querySelectorAll('textarea').forEach(el => flat[el.dataset.key] = el.value);
+    const structured = unflatten(flat);
+    const phpString = jsObjectToPhp(structured);
+    const blob = new Blob([phpString], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = uploadedFileName.endsWith('.php') ? uploadedFileName : uploadedFileName + '.php';
+    a.click();
+});
+</script>
+
+</body>
+</html>
