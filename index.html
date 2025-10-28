@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Translation Editor for Romain</title>
+<title>Translation Editor (Grouped)</title>
 <style>
 body { 
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -10,86 +10,45 @@ body {
     background: #f0f2f5; 
     color: #333; 
 }
-
-h1 { 
-    color: #222; 
-    font-size: 24px; 
-    margin-bottom: 15px; 
-}
-
+h1 { font-size: 24px; margin-bottom: 15px; color:#222; }
 input[type=file], button, input[type=text] {
-    margin: 10px 5px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #ccc;
-    cursor: pointer;
-    font-size: 14px;
+    margin: 10px 5px; padding: 8px 12px;
+    border-radius: 6px; border: 1px solid #ccc;
+    font-size: 14px; cursor:pointer;
 }
+button { background:#007bff; color:#fff; border:none; }
+button:hover { background:#0056b3; }
+#searchInput { width:250px; }
 
-button { 
-    background: #007bff; 
-    color: white; 
-    border: none; 
+.group, .subgroup {
+    background:white; border-radius:8px; 
+    margin-top:10px; box-shadow:0 2px 4px rgba(0,0,0,0.08);
+    overflow:hidden;
 }
-button:hover { 
-    background: #0056b3; 
+.group > .header, .subgroup > .header {
+    background:#e9ecef; padding:10px 14px; cursor:pointer; 
+    font-weight:600; user-select:none;
+    display:flex; align-items:center; justify-content:space-between;
 }
+.group > .content, .subgroup > .content { padding:10px 14px; display:none; }
+.group.open > .content, .subgroup.open > .content { display:block; }
+.arrow { transition:transform 0.2s; }
+.open > .header .arrow { transform:rotate(90deg); }
 
-#searchInput { 
-    width: 250px; 
+textarea {
+    width:100%; min-height:50px;
+    border:1px solid #ccc; border-radius:4px;
+    padding:8px; resize:vertical; font-family:monospace; font-size:13px;
 }
-
-table { 
-    width: 100%; 
-    border-collapse: collapse; 
-    background: white; 
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
-    border-radius: 8px; 
-    overflow: hidden; 
-    margin-top: 15px; 
-}
-
-th, td { 
-    padding: 12px 15px; 
-    border-bottom: 1px solid #eee; 
-    vertical-align: top; 
-    word-break: break-word;
-}
-
-th { 
-    background: #f7f7f7; 
-    text-align: left; 
-    font-weight: 600; 
-}
-
-tbody tr:nth-child(odd) { background: #fcfcfc; }
-
-textarea { 
-    width: 100%; 
-    min-height: 50px; 
-    border: 1px solid #ccc; 
-    border-radius: 4px; 
-    padding: 8px; 
-    resize: vertical; 
-    font-family: monospace; 
-    font-size: 13px; 
-    transition: border 0.2s, box-shadow 0.2s;
-}
-
 textarea:focus {
-    border-color: #007bff;
-    box-shadow: 0 0 5px rgba(0,123,255,0.3);
-    outline: none;
+    border-color:#007bff; box-shadow:0 0 5px rgba(0,123,255,0.3); outline:none;
 }
-
-.highlight {
-    background-color: #fff3a7;
-}
+.highlight { background:#fff3a7; }
 </style>
 </head>
 <body>
 
-<h1>Laravel Translation Editor</h1>
+<h1>Laravel Translation Editor (Grouped)</h1>
 
 <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;">
   <input type="file" id="fileInput" accept=".php">
@@ -97,230 +56,177 @@ textarea:focus {
   <button id="downloadPhp">💾 Export PHP</button>
   <button id="clearLocal">🧹 Clear Local Data</button>
 </div>
+<p id="fileInfo" style="font-style:italic;color:#555;margin-top:5px;"></p>
 
-<p id="fileInfo" style="font-style:italic; color:#555; margin-top:5px;"></p>
-
-<table id="translationTable">
-  <thead><tr><th>Key</th><th>Value</th></tr></thead>
-  <tbody></tbody>
-</table>
+<div id="translationContainer"></div>
 
 <script>
 let data = {};
 let flat = {};
 let uploadedFileName = 'translations.php';
 
-// -----------------------------
-// Flatten/unflatten object
-// -----------------------------
+// =========== Flatten/Unflatten ===========
 function flatten(obj, prefix = '', res = {}) {
-    for (const k in obj) {
-        const path = prefix ? prefix + '.' + k : k;
-        if (typeof obj[k] === 'object' && obj[k] !== null) flatten(obj[k], path, res);
-        else res[path] = obj[k];
-    }
-    return res;
+  for (const k in obj) {
+    const path = prefix ? prefix + '.' + k : k;
+    if (typeof obj[k] === 'object' && obj[k] !== null) flatten(obj[k], path, res);
+    else res[path] = obj[k];
+  }
+  return res;
 }
-
 function unflatten(flatObj) {
-    const res = {};
-    for (const path in flatObj) {
-        path.split('.').reduce((acc, key, i, arr) => {
-            if (i === arr.length - 1) acc[key] = flatObj[path];
-            else acc[key] = acc[key] || {};
-            return acc[key];
-        }, res);
-    }
-    return res;
+  const res = {};
+  for (const path in flatObj) {
+    path.split('.').reduce((acc, key, i, arr) => {
+      if (i === arr.length - 1) acc[key] = flatObj[path];
+      else acc[key] = acc[key] || {};
+      return acc[key];
+    }, res);
+  }
+  return res;
 }
 
-// -----------------------------
-// Parse PHP array into JS object
-// -----------------------------
+// =========== PHP parsing / building ===========
 function parsePhpArray(phpString) {
-    const lines = phpString.split(/\r?\n/);
-    const stack = [{}];
-    let currentKey = null;
-    let multiLineValue = null;
-
-    lines.forEach(line => {
-        line = line.trim();
-        if (!line || line.startsWith('<?') || line.startsWith('return') || line.startsWith('];')) return;
-
-        if (multiLineValue !== null) {
-            if (line.endsWith("',") || line.endsWith("'")) {
-                multiLineValue += '\n' + line.replace(/',?$/, '');
-                stack[stack.length - 1][currentKey] = multiLineValue.replace(/\\'/g, "'");
-                multiLineValue = null;
-                currentKey = null;
-            } else {
-                multiLineValue += '\n' + line;
-            }
-            return;
-        }
-
-        let match = line.match(/'([^']+)'\s*=>\s*\[/);
-        if (match) {
-            currentKey = match[1];
-            const newObj = {};
-            stack[stack.length - 1][currentKey] = newObj;
-            stack.push(newObj);
-            return;
-        }
-
-        if (line === '],' || line === ']') {
-            stack.pop();
-            return;
-        }
-
-        match = line.match(/'([^']+)'\s*=>\s*'(.*)/);
-        if (match) {
-            const k = match[1];
-            let v = match[2];
-            if (!v.endsWith("'") && !v.endsWith("',")) {
-                multiLineValue = v;
-                currentKey = k;
-            } else {
-                v = v.replace(/',?$/, '');
-                stack[stack.length - 1][k] = v.replace(/\\'/g, "'");
-            }
-        }
-    });
-
-    return stack[0];
+  const lines = phpString.split(/\r?\n/);
+  const stack = [{}]; let currentKey = null; let multiLineValue = null;
+  for (let line of lines) {
+    line = line.trim();
+    if (!line || line.startsWith('<?') || line.startsWith('return') || line.startsWith('];')) continue;
+    if (multiLineValue !== null) {
+      if (line.endsWith("',") || line.endsWith("'")) {
+        multiLineValue += '\n' + line.replace(/',?$/, '');
+        stack[stack.length-1][currentKey] = multiLineValue.replace(/\\'/g, "'");
+        multiLineValue = null; currentKey = null;
+      } else { multiLineValue += '\n' + line; }
+      continue;
+    }
+    let match = line.match(/'([^']+)'\s*=>\s*\[/);
+    if (match) { currentKey = match[1]; const newObj={}; stack[stack.length-1][currentKey]=newObj; stack.push(newObj); continue; }
+    if (line === '],' || line === ']') { stack.pop(); continue; }
+    match = line.match(/'([^']+)'\s*=>\s*'(.*)/);
+    if (match) {
+      const k = match[1]; let v = match[2];
+      if (!v.endsWith("'") && !v.endsWith("',")) { multiLineValue = v; currentKey = k; }
+      else { v = v.replace(/',?$/, ''); stack[stack.length-1][k] = v.replace(/\\'/g,"'"); }
+    }
+  }
+  return stack[0];
 }
-
-// -----------------------------
-// Convert JS object -> PHP array string
-// -----------------------------
 function jsObjectToPhp(obj, indent = 0) {
-    const pad = '    '.repeat(indent);
-    let str = indent === 0 ? "<?php\n\nreturn [\n" : '';
-    for (const key in obj) {
-        const val = obj[key];
-        if (typeof val === 'object' && val !== null) {
-            str += `${pad}    '${key}' => [\n${jsObjectToPhp(val, indent + 1)}${pad}    ],\n`;
-        } else {
-            const safe = val.replace(/'/g, "\\'");
-            str += `${pad}    '${key}' => '${safe}',\n`;
-        }
-    }
-    if (indent === 0) str += "];";
-    return str;
+  const pad = '    '.repeat(indent);
+  let str = indent === 0 ? "<?php\n\nreturn [\n" : '';
+  for (const key in obj) {
+    const val = obj[key];
+    if (typeof val === 'object' && val !== null)
+      str += `${pad}    '${key}' => [\n${jsObjectToPhp(val, indent + 1)}${pad}    ],\n`;
+    else str += `${pad}    '${key}' => '${val.replace(/'/g, "\\'")}',\n`;
+  }
+  if (indent === 0) str += "];";
+  return str;
 }
 
-// -----------------------------
-// Render table + autosave
-// -----------------------------
-function renderTable(flatObj, filter = '') {
-    const tbody = document.querySelector('#translationTable tbody');
-    tbody.innerHTML = '';
-    const term = filter.toLowerCase();
+// =========== Grouped Rendering ===========
+function buildGroupedDOM(obj, parentKey='', level=0, filter='') {
+  const container = document.createElement('div');
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = parentKey ? `${parentKey}.${key}` : key;
+    if (typeof value === 'object' && value !== null) {
+      const groupDiv = document.createElement(level===0?'div':'div');
+      groupDiv.className = level===0 ? 'group' : 'subgroup';
+      const header = document.createElement('div');
+      header.className = 'header';
+      header.innerHTML = `<span>${key}</span><span class="arrow">▶</span>`;
+      const content = document.createElement('div');
+      content.className = 'content';
+      const children = buildGroupedDOM(value, fullKey, level+1, filter);
+      if (children) content.appendChild(children);
+      header.addEventListener('click', ()=>groupDiv.classList.toggle('open'));
+      groupDiv.append(header, content);
+      container.appendChild(groupDiv);
+    } else {
+      if (filter && !fullKey.toLowerCase().includes(filter) && !value.toLowerCase().includes(filter)) continue;
+      const field = document.createElement('div');
+      field.innerHTML = `
+        <div style="margin-bottom:5px;font-weight:500;">${fullKey}</div>
+        <textarea data-key="${fullKey}">${value}</textarea>`;
+      container.appendChild(field);
+    }
+  }
+  return container.children.length ? container : null;
+}
 
-    Object.entries(flatObj).forEach(([key, value]) => {
-        if (term && !key.toLowerCase().includes(term) && !value.toLowerCase().includes(term)) return;
-        const tr = document.createElement('tr');
-        const highlightedKey = term ? key.replace(new RegExp(`(${term})`, 'gi'), '<span class="highlight">$1</span>') : key;
-        tr.innerHTML = `<td>${highlightedKey}</td><td><textarea data-key="${key}">${value}</textarea></td>`;
-        tbody.appendChild(tr);
+function renderGrouped(filter='') {
+  const wrap = document.getElementById('translationContainer');
+  wrap.innerHTML = '';
+  const tree = unflatten(flat);
+  const grouped = buildGroupedDOM(tree, '', 0, filter.toLowerCase());
+  if (grouped) wrap.appendChild(grouped);
+  wrap.querySelectorAll('textarea').forEach(el=>{
+    el.addEventListener('input',()=>{
+      flat[el.dataset.key] = el.value;
+      saveToLocalStorage();
     });
-
-    document.querySelectorAll('textarea').forEach(el => {
-        el.addEventListener('input', () => {
-            flat[el.dataset.key] = el.value;
-            saveToLocalStorage();
-        });
-    });
+  });
 }
 
-// -----------------------------
-// LocalStorage helpers
-// -----------------------------
-function getStorageKey() { return 'translationEditor_data'; }
-
-function saveToLocalStorage() {
-    const stored = {
-        fileName: uploadedFileName,
-        flat,
-        phpString: jsObjectToPhp(unflatten(flat))
-    };
-    localStorage.setItem(getStorageKey(), JSON.stringify(stored));
+// =========== LocalStorage ===========
+function getStorageKey(){ return 'translationEditor_grouped'; }
+function saveToLocalStorage(){
+  const stored = {fileName:uploadedFileName, flat};
+  localStorage.setItem(getStorageKey(), JSON.stringify(stored));
+}
+function loadFromLocalStorage(){
+  const saved = localStorage.getItem(getStorageKey());
+  if (!saved) return false;
+  try {
+    const parsed = JSON.parse(saved);
+    uploadedFileName = parsed.fileName; flat = parsed.flat || {};
+    renderGrouped();
+    document.getElementById('fileInfo').textContent = '📂 Restored file: '+uploadedFileName;
+    return true;
+  } catch(e){ console.warn('Restore failed',e); return false; }
+}
+function clearLocalStorage(){
+  localStorage.removeItem(getStorageKey()); location.reload();
 }
 
-function loadFromLocalStorage() {
-    const saved = localStorage.getItem(getStorageKey());
-    if (!saved) return false;
-    try {
-        const parsed = JSON.parse(saved);
-        uploadedFileName = parsed.fileName || 'translations.php';
-        flat = parsed.flat || {};
-        data = unflatten(flat);
-        renderTable(flat);
-        document.getElementById('fileInfo').textContent = '📂 Restored file: ' + uploadedFileName;
-        console.log('✅ File and edits restored from localStorage');
-        return true;
-    } catch (e) {
-        console.warn('Failed to load from localStorage', e);
-        return false;
-    }
-}
-
-function clearLocalStorage() {
-    localStorage.removeItem(getStorageKey());
-    location.reload();
-}
-
-// -----------------------------
-// File upload
-// -----------------------------
-document.getElementById('fileInput').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    uploadedFileName = file.name;
-    const text = await file.text();
-    try {
-        data = parsePhpArray(text);
-        flat = flatten(data);
-        renderTable(flat);
-        saveToLocalStorage();
-        document.getElementById('fileInfo').textContent = '📂 Loaded: ' + uploadedFileName;
-    } catch(err) {
-        alert('⚠️ Could not parse PHP file: ' + err.message);
-    }
+// =========== File upload ===========
+document.getElementById('fileInput').addEventListener('change', async e=>{
+  const file = e.target.files[0]; if (!file) return;
+  uploadedFileName = file.name;
+  const text = await file.text();
+  try{
+    data = parsePhpArray(text);
+    flat = flatten(data);
+    renderGrouped();
+    saveToLocalStorage();
+    document.getElementById('fileInfo').textContent = '📂 Loaded: '+uploadedFileName;
+  } catch(err){ alert('⚠️ Could not parse PHP file: '+err.message); }
 });
 
-// -----------------------------
-// Search filter
-// -----------------------------
-document.getElementById('searchInput').addEventListener('input', e => {
-    renderTable(flat, e.target.value.toLowerCase());
+// =========== Search ===========
+document.getElementById('searchInput').addEventListener('input', e=>{
+  renderGrouped(e.target.value);
 });
 
-// -----------------------------
-// Export PHP
-// -----------------------------
-document.getElementById('downloadPhp').addEventListener('click', () => {
-    document.querySelectorAll('textarea').forEach(el => flat[el.dataset.key] = el.value);
-    const structured = unflatten(flat);
-    const phpString = jsObjectToPhp(structured);
-    const blob = new Blob([phpString], { type: 'text/plain' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = uploadedFileName.endsWith('.php') ? uploadedFileName : uploadedFileName + '.php';
-    a.click();
+// =========== Export ===========
+document.getElementById('downloadPhp').addEventListener('click',()=>{
+  document.querySelectorAll('textarea').forEach(el=>flat[el.dataset.key]=el.value);
+  const structured = unflatten(flat);
+  const phpString = jsObjectToPhp(structured);
+  const blob = new Blob([phpString],{type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = uploadedFileName.endsWith('.php')?uploadedFileName:uploadedFileName+'.php';
+  a.click();
 });
 
-// -----------------------------
-// Clear local data button
-// -----------------------------
-document.getElementById('clearLocal').addEventListener('click', clearLocalStorage);
+// =========== Clear ===========
+document.getElementById('clearLocal').addEventListener('click',clearLocalStorage);
 
-// -----------------------------
-// Try restoring on load
-// -----------------------------
-window.addEventListener('DOMContentLoaded', () => {
-    loadFromLocalStorage();
-});
+// =========== Init ===========
+window.addEventListener('DOMContentLoaded',()=>loadFromLocalStorage());
 </script>
 
 </body>
