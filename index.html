@@ -91,9 +91,14 @@ textarea:focus {
 
 <h1>Laravel Translation Editor</h1>
 
-<input type="file" id="fileInput" accept=".php">
-<input type="text" id="searchInput" placeholder="🔍 Search key or value...">
-<button id="downloadPhp">💾 Export PHP</button>
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;">
+  <input type="file" id="fileInput" accept=".php">
+  <input type="text" id="searchInput" placeholder="🔍 Search key or value...">
+  <button id="downloadPhp">💾 Export PHP</button>
+  <button id="clearLocal">🧹 Clear Local Data</button>
+</div>
+
+<p id="fileInfo" style="font-style:italic; color:#555; margin-top:5px;"></p>
 
 <table id="translationTable">
   <thead><tr><th>Key</th><th>Value</th></tr></thead>
@@ -130,7 +135,7 @@ function unflatten(flatObj) {
 }
 
 // -----------------------------
-// Parse PHP array into JS object (supports multiline strings)
+// Parse PHP array into JS object
 // -----------------------------
 function parsePhpArray(phpString) {
     const lines = phpString.split(/\r?\n/);
@@ -142,7 +147,6 @@ function parsePhpArray(phpString) {
         line = line.trim();
         if (!line || line.startsWith('<?') || line.startsWith('return') || line.startsWith('];')) return;
 
-        // End of multiline string
         if (multiLineValue !== null) {
             if (line.endsWith("',") || line.endsWith("'")) {
                 multiLineValue += '\n' + line.replace(/',?$/, '');
@@ -155,7 +159,6 @@ function parsePhpArray(phpString) {
             return;
         }
 
-        // Match "key" => [
         let match = line.match(/'([^']+)'\s*=>\s*\[/);
         if (match) {
             currentKey = match[1];
@@ -165,23 +168,20 @@ function parsePhpArray(phpString) {
             return;
         }
 
-        // End of nested array
         if (line === '],' || line === ']') {
             stack.pop();
             return;
         }
 
-        // Match "key" => 'value',
         match = line.match(/'([^']+)'\s*=>\s*'(.*)/);
         if (match) {
             const k = match[1];
             let v = match[2];
             if (!v.endsWith("'") && !v.endsWith("',")) {
-                // Start of multiline string
                 multiLineValue = v;
                 currentKey = k;
             } else {
-                v = v.replace(/',?$/, ''); // remove ending ' or ',
+                v = v.replace(/',?$/, '');
                 stack[stack.length - 1][k] = v.replace(/\\'/g, "'");
             }
         }
@@ -210,7 +210,7 @@ function jsObjectToPhp(obj, indent = 0) {
 }
 
 // -----------------------------
-// Render table with search highlighting
+// Render table + autosave
 // -----------------------------
 function renderTable(flatObj, filter = '') {
     const tbody = document.querySelector('#translationTable tbody');
@@ -219,21 +219,59 @@ function renderTable(flatObj, filter = '') {
 
     Object.entries(flatObj).forEach(([key, value]) => {
         if (term && !key.toLowerCase().includes(term) && !value.toLowerCase().includes(term)) return;
-        const level = key.split('.').length - 1;
         const tr = document.createElement('tr');
-        tr.className = 'level-' + level;
-
-        // Highlight matching text
         const highlightedKey = term ? key.replace(new RegExp(`(${term})`, 'gi'), '<span class="highlight">$1</span>') : key;
-        const highlightedValue = term ? value.replace(new RegExp(`(${term})`, 'gi'), '<span class="highlight">$1</span>') : value;
-
         tr.innerHTML = `<td>${highlightedKey}</td><td><textarea data-key="${key}">${value}</textarea></td>`;
         tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll('textarea').forEach(el => {
+        el.addEventListener('input', () => {
+            flat[el.dataset.key] = el.value;
+            saveToLocalStorage();
+        });
     });
 }
 
 // -----------------------------
-// Load PHP file
+// LocalStorage helpers
+// -----------------------------
+function getStorageKey() { return 'translationEditor_data'; }
+
+function saveToLocalStorage() {
+    const stored = {
+        fileName: uploadedFileName,
+        flat,
+        phpString: jsObjectToPhp(unflatten(flat))
+    };
+    localStorage.setItem(getStorageKey(), JSON.stringify(stored));
+}
+
+function loadFromLocalStorage() {
+    const saved = localStorage.getItem(getStorageKey());
+    if (!saved) return false;
+    try {
+        const parsed = JSON.parse(saved);
+        uploadedFileName = parsed.fileName || 'translations.php';
+        flat = parsed.flat || {};
+        data = unflatten(flat);
+        renderTable(flat);
+        document.getElementById('fileInfo').textContent = '📂 Restored file: ' + uploadedFileName;
+        console.log('✅ File and edits restored from localStorage');
+        return true;
+    } catch (e) {
+        console.warn('Failed to load from localStorage', e);
+        return false;
+    }
+}
+
+function clearLocalStorage() {
+    localStorage.removeItem(getStorageKey());
+    location.reload();
+}
+
+// -----------------------------
+// File upload
 // -----------------------------
 document.getElementById('fileInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -244,6 +282,8 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         data = parsePhpArray(text);
         flat = flatten(data);
         renderTable(flat);
+        saveToLocalStorage();
+        document.getElementById('fileInfo').textContent = '📂 Loaded: ' + uploadedFileName;
     } catch(err) {
         alert('⚠️ Could not parse PHP file: ' + err.message);
     }
@@ -253,8 +293,7 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
 // Search filter
 // -----------------------------
 document.getElementById('searchInput').addEventListener('input', e => {
-    const term = e.target.value.toLowerCase();
-    renderTable(flat, term);
+    renderTable(flat, e.target.value.toLowerCase());
 });
 
 // -----------------------------
@@ -269,6 +308,18 @@ document.getElementById('downloadPhp').addEventListener('click', () => {
     a.href = URL.createObjectURL(blob);
     a.download = uploadedFileName.endsWith('.php') ? uploadedFileName : uploadedFileName + '.php';
     a.click();
+});
+
+// -----------------------------
+// Clear local data button
+// -----------------------------
+document.getElementById('clearLocal').addEventListener('click', clearLocalStorage);
+
+// -----------------------------
+// Try restoring on load
+// -----------------------------
+window.addEventListener('DOMContentLoaded', () => {
+    loadFromLocalStorage();
 });
 </script>
 
